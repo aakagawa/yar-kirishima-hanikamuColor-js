@@ -97,23 +97,38 @@ gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
 // Set the WebGL viewport to match the canvas size
 gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+gl.clearColor(1.0, 1.0, 1.0, 1.0); // Set clear color to white (RGBA)
 
 let imageTexture;
+let currentData = null;
+let targetData = null;
+let interpolationSpeed = 0.01; // Adjust this value for interpolation speed
 
 // Load and create texture from an image
 const image = new Image();
-image.src = './assets/demo_1.png'; // Path to your preloaded image
+image.src = './assets/hanikamu_02.png'; // Path to your preloaded image
 image.onload = () => {
   const canvasTmp = document.createElement('canvas');
   const ctxTmp = canvasTmp.getContext('2d');
 
-  const width = 1820;
-  const height = 2572;
+  const width = 1600;
+  const height = 1000;
   canvasTmp.width = width;
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
 
   const imageData = ctxTmp.getImageData(0, 0, width, height);
+
+  // Create and bind texture
+  imageTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, imageTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, imageData.data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+  console.log('Image texture loaded');
 
   drawScene();
 
@@ -122,13 +137,33 @@ image.onload = () => {
 
   ws.onmessage = (event) => {
     const responseData = JSON.parse(event.data);
-    const lightIntensities = responseData.d; // Assuming 'd' contains the light intensity data
-    updateImage(lightIntensities, imageData, width, height);
+    targetData = responseData.d; // Assuming 'd' contains the light intensity data
+    if (!currentData) currentData = targetData.slice(); // Initialize current data on the first run
   };
+
+  // Continuous interpolation
+  function continuousInterpolation() {
+    if (currentData && targetData) {
+      const interpolatedData = currentData.map((value, index) => {
+        return value + (targetData[index] - value) * interpolationSpeed;
+      });
+
+      updateImage(interpolatedData, imageData);
+
+      // Update currentData towards targetData
+      currentData = interpolatedData.slice();
+    }
+
+    requestAnimationFrame(continuousInterpolation);
+  }
+
+  continuousInterpolation(); // Start continuous interpolation
 };
 
 // Function to update the image based on data
-function updateImage(data, imageData, width, height) {
+function updateImage(data, imageData) {
+  const width = 1600;
+  const height = 1000;
   const rowsPerSample = height / 510; // Each sample should correspond to about 1.54 rows
 
   // Normalize the intensity values to range [0, 1]
