@@ -2,5 +2,6 @@ node_modules/
 
 *.jpg
 *.png
+*.tif
 
 .DS_Store
