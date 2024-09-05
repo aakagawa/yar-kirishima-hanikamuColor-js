@@ -30,7 +30,7 @@ wss.on('connection', (ws) => {
     } catch (error) {
       console.error('Error fetching data from spectrometer:', error);
     }
-  }, 1000); // Adjust interval as needed
+  }, 500); // Adjust interval as needed
 
   ws.on('close', () => {
     console.log('Client disconnected');
