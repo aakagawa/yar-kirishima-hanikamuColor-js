@@ -1,5 +1,5 @@
 const canvas = document.getElementById('canvas');
-const gl = canvas.getContext('webgl');
+const gl = canvas.getContext('webgl2');
 
 if (!gl) {
   alert('WebGL not supported, falling back on experimental-webgl');
@@ -63,7 +63,6 @@ const fragmentShaderSource = `
     gl_FragColor = vec4(rgb, imageColor.a);
   }
 `;
-
 
 // Compile shaders
 function createShader(gl, type, source) {
@@ -145,8 +144,8 @@ image.onload = () => {
   const canvasTmp = document.createElement('canvas');
   const ctxTmp = canvasTmp.getContext('2d');
 
-  const width = 1200;
-  const height = 1800;
+  const width = 2400;
+  const height = 3600;
   canvasTmp.width = width;
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
@@ -210,19 +209,21 @@ function resampleData(data, targetLength) {
 
 // Function to update the image based on data
 function updateImage(data, imageData) {
-  const width = 1200;
-  const height = 1800;
+  const width = 2400;
+  const height = 3600;
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
 
+  const maxValue = 10000;
   // Normalize the intensity values to range [0, 1]
-  const maxValue = Math.max(...data);
-  const minValue = Math.min(...data);
-  const normalizedData = data.map(value => (value - minValue) / (maxValue - minValue));
+  // const maxValue = Math.max(...data);
+  // const minValue = Math.min(...data);
+  // const normalizedData = data.map(value => (value - minValue) / (maxValue - minValue));
 
   const stretchedImageData = new Uint8Array(width * height * 4); // Array to hold stretched image data (RGBA for each pixel)
 
   for (let y = 0; y < data.length; y++) {
-    const value = normalizedData[y];
+    // const value = normalizedData[y]; // Normalized value
+    const value = data[y] / maxValue; // Absolute value 
     const startRow = Math.floor(y * rowsPerSample); 
     const endRow = Math.floor((y + 1) * rowsPerSample);
     const rowWidth = Math.floor(width * value);
