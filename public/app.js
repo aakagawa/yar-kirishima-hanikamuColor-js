@@ -10,18 +10,28 @@ if (!gl) {
   alert('Your browser does not support WebGL');
 }
 
+// Vertex shader for normal mode
+const vertexShaderSourceNormal = `
+  attribute vec2 a_position;
+  attribute vec2 a_texCoord;
+  varying vec2 v_texCoord;
+  void main() {
+    gl_Position = vec4(a_position, 0, 1);
+    v_texCoord = a_texCoord;
+  }
+`;
+
 // Vertex shader program with 90-degree counterclockwise rotation
-const vertexShaderSource = `
+const vertexShaderSourceRotated = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
   varying vec2 v_texCoord;
   void main() {
     // Apply 90-degree counterclockwise rotation
     gl_Position = vec4(-a_position.y, a_position.x, 0, 1); // Rotate 90 degrees counterclockwise
-    v_texCoord = vec2(a_texCoord.x, a_texCoord.y); // Keep the texture coordinates as is
+    v_texCoord = vec2(a_texCoord.x, a_texCoord.y); // Keep the texture coordinates as is    
   }
 `;
-
 
 // Fragment shader program
 const fragmentShaderSource = `
@@ -77,7 +87,7 @@ function createShader(gl, type, source) {
   return shader;
 }
 
-const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSourceNormal);
 const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 
 // Link shaders into a program
@@ -94,7 +104,7 @@ function createProgram(gl, vertexShader, fragmentShader) {
   return program;
 }
 
-const program = createProgram(gl, vertexShader, fragmentShader);
+let program = createProgram(gl, vertexShader, fragmentShader);
 gl.useProgram(program);
 
 // Set up position and texture coordinate buffers
@@ -133,9 +143,12 @@ gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 gl.clearColor(1.0, 1.0, 1.0, 1.0); // Set clear color to white (RGBA)
 
 let imageTexture;
+let imageData;
+let axisSwapped = false;
+let lastSwitchTime = Date.now();
 let currentData = null;
 let targetData = null;
-let interpolationSpeed = 0.01; // Adjust this value for interpolation speed
+let interpolationSpeed = 0.01; // Adjust this value for interpolation speed 
 
 // Load and create texture from an image
 const image = new Image();
@@ -150,7 +163,7 @@ image.onload = () => {
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
 
-  const imageData = ctxTmp.getImageData(0, 0, width, height);
+  imageData = ctxTmp.getImageData(0, 0, width, height);
 
   // Create and bind texture
   imageTexture = gl.createTexture();
@@ -181,7 +194,7 @@ image.onload = () => {
         return value + (targetData[index] - value) * interpolationSpeed;
       });
 
-      updateImage(interpolatedData, imageData);
+      updateImage(interpolatedData, imageData, axisSwapped);
 
       // Update currentData towards targetData
       currentData = interpolatedData.slice();
@@ -192,6 +205,26 @@ image.onload = () => {
 
   continuousInterpolation(); // Start continuous interpolation
 };
+
+// Function to toggle axis every minute
+function checkAxisSwap() {
+  const currentTime = Date.now();
+  if ((currentTime - lastSwitchTime) >= 5000) { // 1 minute interval
+    axisSwapped = !axisSwapped;
+    program = reloadProgram(axisSwapped);  // Swap the axis by reloading shaders
+    lastSwitchTime = currentTime;
+  }
+
+  // Update the image with the current data and swap status (axisSwapped)
+  if (currentData) {
+    updateImage(currentData, imageData, axisSwapped);
+  }
+
+  requestAnimationFrame(checkAxisSwap);
+}
+
+// Start axis swap check
+checkAxisSwap();
 
 // Function to resample data using linear interpolation
 function resampleData(data, targetLength) {
@@ -208,22 +241,24 @@ function resampleData(data, targetLength) {
 }
 
 // Function to update the image based on data
-function updateImage(data, imageData) {
+function updateImage(data, imageData, isRotated) {
   const width = 2400;
   const height = 3600;
+
+  const processedData = isRotated ? data : data.slice().reverse();
+  
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
 
-  const maxValue = 10000;
+  const maxValue = 2000;
   // Normalize the intensity values to range [0, 1]
   // const maxValue = Math.max(...data);
   // const minValue = Math.min(...data);
   // const normalizedData = data.map(value => (value - minValue) / (maxValue - minValue));
 
   const stretchedImageData = new Uint8Array(width * height * 4); // Array to hold stretched image data (RGBA for each pixel)
-
-  for (let y = 0; y < data.length; y++) {
+  for (let y = 0; y < processedData.length; y++) {
     // const value = normalizedData[y]; // Normalized value
-    const value = data[y] / maxValue; // Absolute value 
+    const value = processedData[y] / maxValue; // Absolute value 
     const startRow = Math.floor(y * rowsPerSample); 
     const endRow = Math.floor((y + 1) * rowsPerSample);
     const rowWidth = Math.floor(width * value);
@@ -274,6 +309,32 @@ function updateHueShift() {
 
 // Start the hue shift animation
 updateHueShift();
+
+// Function to reload the program based on axis orientation
+function reloadProgram(isRotated) {
+  // Delete the current program
+  gl.deleteProgram(program);
+
+  // Compile shaders depending on the orientation
+  const vertexShaderSource = isRotated ? vertexShaderSourceRotated : vertexShaderSourceNormal;
+  const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+  const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+  
+  // Create and link the new program
+  const newProgram = createProgram(gl, vertexShader, fragmentShader);
+  gl.useProgram(newProgram);
+
+  // Rebind buffers and attributes
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  gl.vertexAttribPointer(gl.getAttribLocation(newProgram, 'a_position'), 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(gl.getAttribLocation(newProgram, 'a_position'));
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.vertexAttribPointer(gl.getAttribLocation(newProgram, 'a_texCoord'), 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(gl.getAttribLocation(newProgram, 'a_texCoord'));
+
+  return newProgram;
+}
 
 // Function to draw the scene
 function drawScene() {
