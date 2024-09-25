@@ -23,7 +23,7 @@ wss.on('connection', (ws) => {
       const response = await axios.get(`http://${spectrometerIP}/data/data.json`); // Adapt to your spectrometer's API endpoint
       const sample = response.data; // Process data as needed
 
-      console.log('Fetched data from spectrometer:', JSON.stringify(sample.d));
+      // console.log('Fetched data from spectrometer:', JSON.stringify(sample.d));
 
       // Send data to WebSocket clients
       ws.send(JSON.stringify(sample));

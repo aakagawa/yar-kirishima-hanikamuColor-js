@@ -10,16 +10,18 @@ if (!gl) {
   alert('Your browser does not support WebGL');
 }
 
-// Vertex shader for normal mode
+// Vertex shader for 180-degree rotation
 const vertexShaderSourceNormal = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
   varying vec2 v_texCoord;
   void main() {
-    gl_Position = vec4(a_position, 0, 1);
-    v_texCoord = a_texCoord;
+    // Apply 180-degree rotation by flipping both x and y coordinates
+    gl_Position = vec4(-a_position.x, -a_position.y, 0, 1); // Rotate 180 degrees
+    v_texCoord = vec2(a_texCoord.x, a_texCoord.y); // Keep the texture coordinates as is
   }
 `;
+
 
 // Vertex shader program with 90-degree counterclockwise rotation
 const vertexShaderSourceRotated = `
@@ -148,7 +150,7 @@ let axisSwapped = false;
 let lastSwitchTime = Date.now();
 let currentData = null;
 let targetData = null;
-let interpolationSpeed = 0.01; // Adjust this value for interpolation speed 
+let interpolationSpeed = 0.02; // Adjust this value for interpolation speed 
 
 // Load and create texture from an image
 const image = new Image();
@@ -157,8 +159,8 @@ image.onload = () => {
   const canvasTmp = document.createElement('canvas');
   const ctxTmp = canvasTmp.getContext('2d');
 
-  const width = 2400;
-  const height = 3600;
+  const width = 3072;
+  const height = 2048;
   canvasTmp.width = width;
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
@@ -183,7 +185,7 @@ image.onload = () => {
 
   ws.onmessage = (event) => {
     const responseData = JSON.parse(event.data);
-    targetData = resampleData(responseData.d, 5100); // Resample the real-time data
+    targetData = resampleData(responseData.d, 2040); // Resample the real-time data
     if (!currentData) currentData = targetData.slice(); // Initialize current data on the first run
   };
 
@@ -209,7 +211,7 @@ image.onload = () => {
 // Function to toggle axis every minute
 function checkAxisSwap() {
   const currentTime = Date.now();
-  if ((currentTime - lastSwitchTime) >= 5000) { // 1 minute interval
+  if ((currentTime - lastSwitchTime) >= 10000) { // 10 seconds interval
     axisSwapped = !axisSwapped;
     program = reloadProgram(axisSwapped);  // Swap the axis by reloading shaders
     lastSwitchTime = currentTime;
@@ -242,10 +244,10 @@ function resampleData(data, targetLength) {
 
 // Function to update the image based on data
 function updateImage(data, imageData, isRotated) {
-  const width = 2400;
-  const height = 3600;
+  const width = 3072;
+  const height = 2048;
 
-  const processedData = isRotated ? data : data.slice().reverse();
+  const processedData = isRotated ? data.slice().reverse() : data;
   
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
 
@@ -286,7 +288,7 @@ function updateImage(data, imageData, isRotated) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-  console.log('Stretched image texture updated');
+  // console.log('Stretched image texture updated');
 
   drawScene();
 }
