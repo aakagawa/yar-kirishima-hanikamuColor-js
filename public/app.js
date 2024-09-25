@@ -150,7 +150,7 @@ let axisSwapped = false;
 let lastSwitchTime = Date.now();
 let currentData = null;
 let targetData = null;
-let interpolationSpeed = 0.02; // Adjust this value for interpolation speed 
+let interpolationSpeed = 0.01; // Adjust this value for interpolation speed 
 
 // Load and create texture from an image
 const image = new Image();
@@ -159,8 +159,8 @@ image.onload = () => {
   const canvasTmp = document.createElement('canvas');
   const ctxTmp = canvasTmp.getContext('2d');
 
-  const width = 3072;
-  const height = 2048;
+  const width = 1536;
+  const height = 1024;
   canvasTmp.width = width;
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
@@ -185,7 +185,13 @@ image.onload = () => {
 
   ws.onmessage = (event) => {
     const responseData = JSON.parse(event.data);
-    targetData = resampleData(responseData.d, 2040); // Resample the real-time data
+
+      // Trim the data range: slice from 400nm (index 60) to 850nm (index 444)
+    const startIndex = 180; // 400nm corresponds to index 60
+    const endIndex = startIndex + 200; // We want 384 samples
+    const trimmedData = responseData.d.slice(startIndex, endIndex); // Trim the data
+
+    targetData = resampleData(trimmedData, 2040); // Resample the real-time data if necessary
     if (!currentData) currentData = targetData.slice(); // Initialize current data on the first run
   };
 
@@ -244,14 +250,14 @@ function resampleData(data, targetLength) {
 
 // Function to update the image based on data
 function updateImage(data, imageData, isRotated) {
-  const width = 3072;
-  const height = 2048;
+  const width = 1536;
+  const height = 1024;
 
   const processedData = isRotated ? data.slice().reverse() : data;
   
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
 
-  const maxValue = 2000;
+  const maxValue = 10000;
   // Normalize the intensity values to range [0, 1]
   // const maxValue = Math.max(...data);
   // const minValue = Math.min(...data);
