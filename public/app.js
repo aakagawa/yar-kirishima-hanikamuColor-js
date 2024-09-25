@@ -11,7 +11,7 @@ if (!gl) {
 }
 
 // Vertex shader for 180-degree rotation
-const vertexShaderSourceNormal = `
+const vertexShaderSourceMode1 = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
   varying vec2 v_texCoord;
@@ -24,7 +24,7 @@ const vertexShaderSourceNormal = `
 
 
 // Vertex shader program with 90-degree counterclockwise rotation
-const vertexShaderSourceRotated = `
+const vertexShaderSourceMode2 = `
   attribute vec2 a_position;
   attribute vec2 a_texCoord;
   varying vec2 v_texCoord;
@@ -89,7 +89,7 @@ function createShader(gl, type, source) {
   return shader;
 }
 
-const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSourceNormal);
+const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSourceMode1);
 const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
 
 // Link shaders into a program
@@ -147,10 +147,16 @@ gl.clearColor(1.0, 1.0, 1.0, 1.0); // Set clear color to white (RGBA)
 let imageTexture;
 let imageData;
 let axisSwapped = false;
-let lastSwitchTime = Date.now();
 let currentData = null;
 let targetData = null;
-let interpolationSpeed = 0.01; // Adjust this value for interpolation speed 
+
+let maxValue = 10000;
+let mode1StartIndex = 110;
+let mode1IndexRange = 200;
+let mode2StartIndex = 110;
+let mode2IndexRange = 200;
+let dataResolution = 2040;
+let interpolationSpeed = 0.01;
 
 // Load and create texture from an image
 const image = new Image();
@@ -179,19 +185,26 @@ image.onload = () => {
   console.log('Image texture loaded');
 
   drawScene();
-
   // WebSocket connection
   const ws = new WebSocket('ws://192.168.0.101:3000'); // Use your server's local IP address
-
+  
   ws.onmessage = (event) => {
     const responseData = JSON.parse(event.data);
-
-      // Trim the data range: slice from 400nm (index 60) to 850nm (index 444)
-    const startIndex = 180; // 400nm corresponds to index 60
-    const endIndex = startIndex + 200; // We want 384 samples
-    const trimmedData = responseData.d.slice(startIndex, endIndex); // Trim the data
-
-    targetData = resampleData(trimmedData, 2040); // Resample the real-time data if necessary
+    
+    let startIndex, indexRange;
+  
+    if (axisSwapped) {
+      startIndex = mode2StartIndex;
+      indexRange = mode2IndexRange;
+    } else {
+      startIndex = mode1StartIndex;
+      indexRange = mode1IndexRange;
+    }
+  
+    const endIndex = startIndex + indexRange;
+    const trimmedData = responseData.d.slice(startIndex, endIndex);
+  
+    targetData = resampleData(trimmedData, dataResolution); // Adjust dataResolution if needed
     if (!currentData) currentData = targetData.slice(); // Initialize current data on the first run
   };
 
@@ -216,12 +229,9 @@ image.onload = () => {
 
 // Function to toggle axis every minute
 function checkAxisSwap() {
-  const currentTime = Date.now();
-  if ((currentTime - lastSwitchTime) >= 10000) { // 10 seconds interval
-    axisSwapped = !axisSwapped;
-    program = reloadProgram(axisSwapped);  // Swap the axis by reloading shaders
-    lastSwitchTime = currentTime;
-  }
+  const currentHour = new Date().getHours();
+  axisSwapped = currentHour % 2 === 0; // Even hour mode 2, odd hour mode 1
+  program = reloadProgram(axisSwapped);  // Swap the axis by reloading shaders
 
   // Update the image with the current data and swap status (axisSwapped)
   if (currentData) {
@@ -256,12 +266,6 @@ function updateImage(data, imageData, isRotated) {
   const processedData = isRotated ? data.slice().reverse() : data;
   
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
-
-  const maxValue = 10000;
-  // Normalize the intensity values to range [0, 1]
-  // const maxValue = Math.max(...data);
-  // const minValue = Math.min(...data);
-  // const normalizedData = data.map(value => (value - minValue) / (maxValue - minValue));
 
   const stretchedImageData = new Uint8Array(width * height * 4); // Array to hold stretched image data (RGBA for each pixel)
   for (let y = 0; y < processedData.length; y++) {
@@ -324,7 +328,7 @@ function reloadProgram(isRotated) {
   gl.deleteProgram(program);
 
   // Compile shaders depending on the orientation
-  const vertexShaderSource = isRotated ? vertexShaderSourceRotated : vertexShaderSourceNormal;
+  const vertexShaderSource = isRotated ? vertexShaderSourceMode2 : vertexShaderSourceMode1;
   const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
   const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
   
@@ -357,3 +361,111 @@ function drawScene() {
 
 // Initial draw
 drawScene();
+
+let guiVisible = false;
+let selectedParameter = 0; // Track the selected parameter
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'g') {
+    guiVisible = !guiVisible;
+    if (!guiVisible) {
+      hideGUI(); // Hide GUI if 'g' is pressed and guiVisible is false
+    }
+  } else if (guiVisible) {
+    if (event.key === 'ArrowUp') {
+      selectedParameter = (selectedParameter - 1 + 7) % 7; // 7 parameters
+    } else if (event.key === 'ArrowDown') {
+      selectedParameter = (selectedParameter + 1) % 7;
+    } else if (event.key === 'ArrowRight') {
+      adjustParameter(1);
+    } else if (event.key === 'ArrowLeft') {
+      adjustParameter(-1);
+    }
+  }
+});
+
+function adjustParameter(delta) {
+  switch (selectedParameter) {
+    case 0: maxValue += delta * 500; break;
+    case 1: mode1StartIndex += delta * 10; break;
+    case 2: mode1IndexRange += delta * 10; break;
+    case 3: mode2StartIndex += delta * 10; break;
+    case 4: mode2IndexRange += delta * 10; break;
+    case 5: dataResolution += delta * 510; break;
+    case 6: interpolationSpeed += delta * 0.005; break;
+  }
+}
+
+function displayGUI() {
+  if (guiVisible) {
+    const params = [
+      `maxValue: ${maxValue}`,
+      `mode1StartIndex: ${mode1StartIndex}`,
+      `mode1IndexRange: ${mode1IndexRange}`,
+      `mode2StartIndex: ${mode2StartIndex}`,
+      `mode2IndexRange: ${mode2IndexRange}`,
+      `dataResolution: ${dataResolution}`,
+      `interpolationSpeed: ${interpolationSpeed}`
+    ];
+
+    const guiElement = document.getElementById('gui');
+    guiElement.innerHTML = params.map((param, i) => 
+      `<div ${i === selectedParameter ? 'style="color: white;"' : ''}>${param}</div>`
+    ).join('');
+  }
+  requestAnimationFrame(displayGUI);
+}
+
+function hideGUI() {
+  const guiElement = document.getElementById('gui');
+  guiElement.innerHTML = ''; // Clear the GUI content to hide it
+}
+
+function saveSettings() {
+  const settings = {
+    maxValue,
+    mode1StartIndex,
+    mode1IndexRange,
+    mode2StartIndex,
+    mode2IndexRange,
+    dataResolution,
+    interpolationSpeed
+  };
+  localStorage.setItem('settings', JSON.stringify(settings)); // Store settings in localStorage
+}
+
+function loadSettings() {
+  const settings = JSON.parse(localStorage.getItem('settings'));
+  if (settings) {
+    maxValue = settings.maxValue;
+    mode1StartIndex = settings.mode1StartIndex;
+    mode1IndexRange = settings.mode1IndexRange;
+    mode2StartIndex = settings.mode2StartIndex;
+    mode2IndexRange = settings.mode2IndexRange;
+    dataResolution = settings.dataResolution;
+    interpolationSpeed = settings.interpolationSpeed;
+  } else {
+    loadDefaultSettings(); // If no previous settings, load defaults
+  }
+}
+
+function loadDefaultSettings() {
+  maxValue = 10000;
+  mode1StartIndex = 110;
+  mode1IndexRange = 200;
+  mode2StartIndex = 110;
+  mode2IndexRange = 200;
+  dataResolution = 2040;
+  interpolationSpeed = 0.01;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.shiftKey && event.key === 'D') {
+    loadDefaultSettings();
+  }
+});
+
+window.addEventListener('load', loadSettings);
+window.addEventListener('beforeunload', saveSettings);
+
+displayGUI();
