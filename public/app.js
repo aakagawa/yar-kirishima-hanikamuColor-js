@@ -1,5 +1,5 @@
 const canvas = document.getElementById('canvas');
-const gl = canvas.getContext('webgl2');
+let gl = canvas.getContext('webgl2');
 
 if (!gl) {
   alert('WebGL not supported, falling back on experimental-webgl');
@@ -112,22 +112,26 @@ gl.useProgram(program);
 // Set up position and texture coordinate buffers
 const positionBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
 const positions = [
   -1, -1,
    1, -1,
   -1,  1,
    1,  1,
 ];
+
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
 const texCoordBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+
 const texCoords = [
-  0, 1,  // Top-left corner
-  1, 1,  // Top-right corner
-  0, 0,  // Bottom-left corner
-  1, 0,  // Bottom-right corner
+  0, 1,
+  1, 1,
+  0, 0,
+  1, 0,
 ];
+
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texCoords), gl.STATIC_DRAW);
 
 const positionLocation = gl.getAttribLocation(program, 'a_position');
@@ -142,7 +146,7 @@ gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
 // Set the WebGL viewport to match the canvas size
 gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-gl.clearColor(1.0, 1.0, 1.0, 1.0); // Set clear color to white (RGBA)
+gl.clearColor(0.0, 0.0, 0.0, 0.0); // Set clear color to white (RGBA)
 
 let imageTexture;
 let imageData;
@@ -150,23 +154,27 @@ let axisSwapped = false;
 let currentData = null;
 let targetData = null;
 
-let maxValue = 10000;
-let mode1StartIndex = 110;
+let maxValue = 16000;
+let mode1StartIndex = 120;
 let mode1IndexRange = 200;
-let mode2StartIndex = 110;
-let mode2IndexRange = 200;
-let dataResolution = 2040;
+let mode2StartIndex = 140;
+let mode2IndexRange = 180;
+let dataResolution = 1920;
 let interpolationSpeed = 0.01;
+
+let steepness = 4;  // Controls the curve steepness; larger values make it sharper
+let midpointDay = 0.6; 
+let midpointNight = 0.3;
 
 // Load and create texture from an image
 const image = new Image();
-image.src = './assets/hanikamu_02.png'; // Path to your preloaded image
+image.src = './assets/hanikamu_01.png'; // Path to your preloaded image
 image.onload = () => {
   const canvasTmp = document.createElement('canvas');
   const ctxTmp = canvasTmp.getContext('2d');
 
-  const width = 1536;
-  const height = 1024;
+  const width = 2560;
+  const height = 1280;
   canvasTmp.width = width;
   canvasTmp.height = height;
   ctxTmp.drawImage(image, 0, 0, width, height);
@@ -186,7 +194,7 @@ image.onload = () => {
 
   drawScene();
   // WebSocket connection
-  const ws = new WebSocket('ws://192.168.0.101:3000'); // Use your server's local IP address
+  const ws = new WebSocket('ws://127.0.0.1:3030'); // Use your server's local IP address
   
   ws.onmessage = (event) => {
     const responseData = JSON.parse(event.data);
@@ -203,13 +211,77 @@ image.onload = () => {
   
     const endIndex = startIndex + indexRange;
     const trimmedData = responseData.d.slice(startIndex, endIndex);
-  
-    targetData = resampleData(trimmedData, dataResolution); // Adjust dataResolution if needed
+
+    const maxValueForData = 100000;
+
+    const biasedTrimmedData = trimmedData.map(value => {
+        // Normalize the value first between 0 and 1
+        const normalizedValue = value / maxValueForData;
+
+        // Apply sigmoid-like function
+        const biasedValue = 1 / (1 + Math.exp(-steepness * (normalizedValue - midpoint)));
+
+        // Scale back up to the original value range
+        return biasedValue * maxValueForData;
+    });
+    
+    targetData = resampleData(biasedTrimmedData, dataResolution); // Adjust dataResolution if needed
     if (!currentData) currentData = targetData.slice(); // Initialize current data on the first run
+  };
+
+    // SSE connection to spectro_relay
+  // const eventSource = new EventSource(
+  //   'https://spectro-relay-5447580157.asia-northeast1.run.app/stream'
+  // );
+
+  ws.onmessage = (event) => {
+    const responseData = JSON.parse(event.data);
+
+    let startIndex, indexRange;
+
+    if (axisSwapped) {
+      startIndex = mode2StartIndex;
+      indexRange = mode2IndexRange;
+    } else {
+      startIndex = mode1StartIndex;
+      indexRange = mode1IndexRange;
+    }
+
+    const endIndex = startIndex + indexRange;
+    const trimmedData = responseData.d.slice(startIndex, endIndex);
+
+    const maxValueForData = 100000;
+
+    const activeMidpoint = getCurrentMidpoint(); // Get the current midpoint based on time of day
+    const biasedTrimmedData = trimmedData.map(value => {
+      // Normalize the value first between 0 and 1
+      const normalizedValue = value / maxValueForData;
+
+      // Apply sigmoid-like function (use current midpoint based on time of day)
+      const biasedValue = 1 / (1 + Math.exp(-steepness * (normalizedValue - activeMidpoint)));
+
+      // Scale back up to the original value range
+      return biasedValue * maxValueForData;
+    });
+
+    targetData = resampleData(biasedTrimmedData, dataResolution);
+    if (!currentData) currentData = targetData.slice();
+  };
+
+  ws.onerror = () => {
+    console.warn('SSE connection error / reconnecting...');
   };
 
   // Continuous interpolation
   function continuousInterpolation() {
+
+    const now = performance.now();
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+
+    const instantFPS = 1000 / dt;
+    fps = 0.9 * fps + 0.1 * instantFPS; // Smoothed FPS
+
     if (currentData && targetData) {
       const interpolatedData = currentData.map((value, index) => {
         return value + (targetData[index] - value) * interpolationSpeed;
@@ -241,8 +313,19 @@ function checkAxisSwap() {
   requestAnimationFrame(checkAxisSwap);
 }
 
-// Start axis swap check
+// // Start axis swap check
 checkAxisSwap();
+
+// Function to check and apply midpoint mode
+function getCurrentMidpoint() {
+  const now = new Date();
+  const timeInHours = now.getHours() + now.getMinutes() / 60;
+
+  // 5:30 <= time < 17:30 => day
+  return (timeInHours >= 5.5 && timeInHours < 17.5)
+    ? midpointDay
+    : midpointNight;
+}
 
 // Function to resample data using linear interpolation
 function resampleData(data, targetLength) {
@@ -260,16 +343,15 @@ function resampleData(data, targetLength) {
 
 // Function to update the image based on data
 function updateImage(data, imageData, isRotated) {
-  const width = 1536;
-  const height = 1024;
+  const width = 2560;
+  const height = 1280;
 
   const processedData = isRotated ? data.slice().reverse() : data;
-  
   const rowsPerSample = height / data.length; // Each sample should correspond to about 1.54 rows
 
   const stretchedImageData = new Uint8Array(width * height * 4); // Array to hold stretched image data (RGBA for each pixel)
+
   for (let y = 0; y < processedData.length; y++) {
-    // const value = normalizedData[y]; // Normalized value
     const value = processedData[y] / maxValue; // Absolute value 
     const startRow = Math.floor(y * rowsPerSample); 
     const endRow = Math.floor((y + 1) * rowsPerSample);
@@ -298,8 +380,6 @@ function updateImage(data, imageData, isRotated) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
-  // console.log('Stretched image texture updated');
-
   drawScene();
 }
 
@@ -307,8 +387,8 @@ let startTime = Date.now();
 
 function updateHueShift() {
   // Calculate time elapsed in minutes
-  const elapsedTime = (Date.now() - startTime) / (1000 * 60); // Time in minutes
-  const hueShift = (elapsedTime / 1) % 1.0; // 360 degrees over 12 minutes
+  const elapsedTime = (Date.now() - startTime) / 60000;
+  const hueShift = (elapsedTime / 12) % 1.0;
 
   const hueShiftLocation = gl.getUniformLocation(program, 'u_hueShift');
   gl.uniform1f(hueShiftLocation, hueShift);
@@ -362,66 +442,192 @@ function drawScene() {
 // Initial draw
 drawScene();
 
-let guiVisible = false;
-let selectedParameter = 0; // Track the selected parameter
+//-----------------------------------------------------
+// GUI SYSTEM
+//-----------------------------------------------------
 
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'g') {
-    guiVisible = !guiVisible;
-    if (!guiVisible) {
-      hideGUI(); // Hide GUI if 'g' is pressed and guiVisible is false
-    }
-  } else if (guiVisible) {
-    if (event.key === 'ArrowUp') {
-      selectedParameter = (selectedParameter - 1 + 7) % 7; // 7 parameters
-    } else if (event.key === 'ArrowDown') {
-      selectedParameter = (selectedParameter + 1) % 7;
-    } else if (event.key === 'ArrowRight') {
-      adjustParameter(1);
-    } else if (event.key === 'ArrowLeft') {
-      adjustParameter(-1);
-    }
+let guiVisible = false;
+let selectedParam = 0;
+const NUM_PARAMS = 10;
+
+/* FPS read-out (exponentially smoothed) */
+let fps = 0.0;
+let lastFrameTime = performance.now();
+
+let textEntryActive = false;
+let textEntryString = "";
+
+const guiElement = document.getElementById("gui");
+
+//-----------------------------------------------------
+// PARAMETER ACCESS
+//-----------------------------------------------------
+
+const paramNames = [
+"maxValue",
+"mode1StartIndex",
+"mode1IndexRange",
+"mode2StartIndex",
+"mode2IndexRange",
+"dataResolution",
+"interpolationSpeed",
+"steepness",
+"midpointDay",
+"midpointNight"
+];
+
+const paramFormats = [
+  v => v.toFixed(0), // maxValue
+  v => v.toFixed(0), // mode1StartIndex
+  v => v.toFixed(0), // mode1IndexRange
+  v => v.toFixed(0), // mode2StartIndex
+  v => v.toFixed(0), // mode2IndexRange
+  v => v.toFixed(0), // dataResolution
+  v => v.toFixed(3), // interpolationSpeed
+  v => v.toFixed(1), // steepness
+  v => v.toFixed(2), // midpointDay
+  v => v.toFixed(2)  // midpointNight
+];
+
+function getParameterValue(i){
+  switch(i){
+    case 0:return maxValue;
+    case 1:return mode1StartIndex;
+    case 2:return mode1IndexRange;
+    case 3:return mode2StartIndex;
+    case 4:return mode2IndexRange;
+    case 5:return dataResolution;
+    case 6:return interpolationSpeed;
+    case 7:return steepness;
+    case 8:return midpointDay;
+    case 9:return midpointNight;
   }
+}
+
+function setParameterValue(i,v){
+  switch(i){
+    case 0:maxValue=v;break;
+    case 1:mode1StartIndex=v;break;
+    case 2:mode1IndexRange=v;break;
+    case 3:mode2StartIndex=v;break;
+    case 4:mode2IndexRange=v;break;
+    case 5:dataResolution=v;break;
+    case 6:interpolationSpeed=v;break;
+    case 7:steepness=v;break;
+    case 8:midpointDay=v;break;
+    case 9:midpointNight=v;break;
+
+  }
+}
+
+//-----------------------------------------------------
+// KEYBOARD INPUT
+//-----------------------------------------------------
+
+document.addEventListener("keydown", e => {
+
+  if(e.shiftKey && e.key === "D"){
+    loadDefaultSettings();
+    return;
+  }
+
+  if(textEntryActive){
+    handleTypingMode(e);
+    return;
+  }
+
+  handleRegularGUI(e);
 });
 
-function adjustParameter(delta) {
-  switch (selectedParameter) {
-    case 0: maxValue += delta * 500; break;
-    case 1: mode1StartIndex += delta * 10; break;
-    case 2: mode1IndexRange += delta * 10; break;
-    case 3: mode2StartIndex += delta * 10; break;
-    case 4: mode2IndexRange += delta * 10; break;
-    case 5: dataResolution += delta * 510; break;
-    case 6: interpolationSpeed += delta * 0.005; break;
+function handleRegularGUI(e){
+  if(e.key === "g"){
+    guiVisible = !guiVisible;
+    if(!guiVisible) hideGUI();
+    return;
+  }
+
+  if(!guiVisible) return;
+  switch(e.key){
+    case "ArrowUp":
+      selectedParam = (selectedParam - 1 + NUM_PARAMS) % NUM_PARAMS;
+      break;
+    case "ArrowDown":
+      selectedParam = (selectedParam + 1) % NUM_PARAMS;
+      break;
+    case "ArrowRight":
+      adjustParameter(+1);
+      break;
+    case "ArrowLeft":
+      adjustParameter(-1);
+      break;
+    case "Enter":
+      textEntryActive = true;
+      textEntryString = "";
+      break;
   }
 }
 
-function displayGUI() {
-  if (guiVisible) {
-    const params = [
-      `maxValue: ${maxValue}`,
-      `mode1StartIndex: ${mode1StartIndex}`,
-      `mode1IndexRange: ${mode1IndexRange}`,
-      `mode2StartIndex: ${mode2StartIndex}`,
-      `mode2IndexRange: ${mode2IndexRange}`,
-      `dataResolution: ${dataResolution}`,
-      `interpolationSpeed: ${interpolationSpeed}`
-    ];
-
-    const guiElement = document.getElementById('gui');
-    guiElement.innerHTML = params.map((param, i) => 
-      `<div ${i === selectedParameter ? 'style="color: white;"' : ''}>${param}</div>`
-    ).join('');
+function handleTypingMode(e){
+  if(e.key === "Enter"){
+    commitTyping();
+    return;
   }
-  requestAnimationFrame(displayGUI);
+  if(e.key === "Escape"){
+    textEntryActive = false;
+    textEntryString = "";
+    return;
+  }
+  if(e.key === "Backspace"){
+    textEntryString = textEntryString.slice(0,-1);
+    return;
+  }
+  if(/[\d.\-]/.test(e.key)){
+    textEntryString += e.key;
+  }
 }
 
-function hideGUI() {
-  const guiElement = document.getElementById('gui');
-  guiElement.innerHTML = ''; // Clear the GUI content to hide it
+function commitTyping(){
+
+  const v = parseFloat(textEntryString);
+
+  if(!isNaN(v)){
+    setParameterValue(selectedParam,v);
+  }
+
+  textEntryActive = false;
+  textEntryString = "";
+
+  saveSettings();
 }
 
-function saveSettings() {
+//-----------------------------------------------------
+// ARROW ADJUSTMENT
+//-----------------------------------------------------
+
+function adjustParameter(d){
+  switch(selectedParam){
+
+    case 0:maxValue += d*500;break;
+    case 1:mode1StartIndex += d*10;break;
+    case 2:mode1IndexRange += d*10;break;
+    case 3:mode2StartIndex += d*10;break;
+    case 4:mode2IndexRange += d*10;break;
+    case 5:dataResolution += d*1;break;
+    case 6:interpolationSpeed += d*0.005;break;
+    case 7:steepness += d*1;break;
+    case 8:midpointDay += d*0.05;break;
+    case 9:midpointNight += d*0.05;break;
+
+  }
+
+  saveSettings();
+}
+
+// SETTINGS STORAGE
+
+const STORAGE_KEY = "spectrometerVisualizerSettings";
+
+function saveSettings(){
   const settings = {
     maxValue,
     mode1StartIndex,
@@ -429,43 +635,99 @@ function saveSettings() {
     mode2StartIndex,
     mode2IndexRange,
     dataResolution,
-    interpolationSpeed
+    interpolationSpeed,
+    steepness,
+    midpointDay,
+    midpointNight,
   };
-  localStorage.setItem('settings', JSON.stringify(settings)); // Store settings in localStorage
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
-function loadSettings() {
-  const settings = JSON.parse(localStorage.getItem('settings'));
-  if (settings) {
-    maxValue = settings.maxValue;
-    mode1StartIndex = settings.mode1StartIndex;
-    mode1IndexRange = settings.mode1IndexRange;
-    mode2StartIndex = settings.mode2StartIndex;
-    mode2IndexRange = settings.mode2IndexRange;
-    dataResolution = settings.dataResolution;
-    interpolationSpeed = settings.interpolationSpeed;
-  } else {
-    loadDefaultSettings(); // If no previous settings, load defaults
-  }
-}
+function loadSettings(){
 
-function loadDefaultSettings() {
-  maxValue = 10000;
-  mode1StartIndex = 110;
-  mode1IndexRange = 200;
-  mode2StartIndex = 110;
-  mode2IndexRange = 200;
-  dataResolution = 2040;
-  interpolationSpeed = 0.01;
-}
+  const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
 
-document.addEventListener('keydown', (event) => {
-  if (event.shiftKey && event.key === 'D') {
+  if(!s){
     loadDefaultSettings();
+    return;
   }
-});
 
-window.addEventListener('load', loadSettings);
-window.addEventListener('beforeunload', saveSettings);
+  maxValue = s.maxValue ?? 16000;
+  mode1StartIndex = s.mode1StartIndex ?? 120;
+  mode1IndexRange = s.mode1IndexRange ?? 200;
+  mode2StartIndex = s.mode2StartIndex ?? 140;
+  mode2IndexRange = s.mode2IndexRange ?? 180;
+  dataResolution = s.dataResolution ?? 1920;
+  interpolationSpeed = s.interpolationSpeed ?? 0.01;
+  steepness = s.steepness ?? 4;
+  midpointDay = s.midpointDay ?? 0.6;
+  midpointNight = s.midpointNight ?? 0.3;
 
-displayGUI();
+}
+
+function loadDefaultSettings(){
+
+  maxValue = 16000;
+  mode1StartIndex = 120;
+  mode1IndexRange = 200;
+  mode2StartIndex = 140;
+  mode2IndexRange = 180;
+  dataResolution = 1920;
+  interpolationSpeed = 0.01;
+  steepness = 4;
+  midpointDay = 0.6;
+  midpointNight = 0.3;
+
+  saveSettings();
+}
+
+window.addEventListener("load", loadSettings);
+window.addEventListener("beforeunload", saveSettings);
+
+// GUI DISPLAY
+function displayGUI(){
+
+  if(!guiVisible){
+    requestAnimationFrame(displayGUI);
+    return;
+  }
+
+  const paramHTML = paramNames.map((name,i)=>{
+    const value = getParameterValue(i);
+    const hi = i===selectedParam ? 'style="color:white"' : '';
+    const txt = `${name}: ${paramFormats[i](value)}`;
+    const typ = (textEntryActive && i===selectedParam)
+      ? ` [${textEntryString}]`
+      : "";
+
+    return `<div ${hi}>${txt}${typ}</div>`;
+  }).join("");
+
+  const fpsHTML = `<div style="color:white">fps: ${fps.toFixed(1)}</div>`;
+
+  guiElement.innerHTML = fpsHTML + paramHTML;
+  requestAnimationFrame(displayGUI);
+}
+
+requestAnimationFrame(displayGUI);
+
+function hideGUI(){
+  guiElement.innerHTML = "";
+}
+
+// CURSOR HIDE
+let cursorTimeout;
+
+function hideCursor() {
+  document.body.style.cursor = 'none';
+}
+
+function showCursor() {
+  document.body.style.cursor = 'default';
+  clearTimeout(cursorTimeout);
+  cursorTimeout = setTimeout(hideCursor, 5000);
+}
+
+document.addEventListener('mousemove', showCursor);
+cursorTimeout = setTimeout(hideCursor, 5000);

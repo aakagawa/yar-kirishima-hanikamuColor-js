@@ -3,7 +3,7 @@ const WebSocket = require('ws');
 const axios = require('axios'); // For making HTTP requests
 
 const app = express();
-const port = 3000;
+const port = 3030;
 const spectrometerIP = '192.168.0.100'; // IP address of the spectrometer in AP mode
 
 app.use(express.static('public'));
